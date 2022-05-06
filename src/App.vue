@@ -1,24 +1,34 @@
 <template>
     <div>
         <!-- clubs (♣), diamonds (♦), hearts (♥) and spades (♠) !-->
+        <span>Ręka przeciwnika</span><br>
+        <card v-if="players[1].handHidden==false" :deck="players[1].hand" />
+        <card-hidden v-if="players[1].handHidden==true" :deck="players[1].hand" />
         <div class="grid grid-cols-2">
             <card v-if="debug" @some-event="(n) => addToHand(n)" :deck="deck"/>
         </div>
         <div>
             <div>
-                <button class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded" @click="drawToFullHand">Dobierz do 5 kart</button>
-                <button class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded" @click="estimateHand">Sprawdź rękę</button>
-                <button class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded" @click="swapCards">Wymień rękę</button><br>
+                <button class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded" @click="checkHandButtonEvent" v-if="!gameHasEnded">Sprawdź rękę</button>
+                <button class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded" @click="swapCards" v-show="!players[0].wasHandSwapped && !gameHasEnded">Wymień rękę</button><br>
+                <button class="bg-blue-500 hover:bg-blue-700 text-white font-bold py-2 px-4 rounded" @click="newGame" v-show="gameHasEnded">Nowa gra</button>
             </div>
             <span>Twoja ręka</span><br>
             <card @some-event="(n) => echo(n)" :deck="players[0].hand" />
         </div>
+        <span>Łączna ilość wygranych </span>
+        <span>{{ wins }}</span><br><br><br>
+        <span v-if="players[0].estimation!=''">Gracz pierwszy ma: {{ players[0].estimation }}</span><br>
+        <span v-if="players[1].estimation!=''">Gracz drugi ma: {{ players[1].estimation }}</span><br>
+        <span class="text-lg">{{ message }}</span>
     </div>
 </template>
 
 <script>
 import card from './components/Card.vue'
+import cardHidden from './components/CardHidden.vue'
 import axios from 'axios'
+import VueCookies from 'vue-cookies'
 export default {
     data() {
         return {
@@ -26,17 +36,38 @@ export default {
             players:[
                 {
                     hand:[],
-                    saldo:0,
-                    wasHandSwapped: false
+                    wasHandSwapped: false,
+                    power:{
+                        ranking:-1,
+                        card:-1
+                    },
+                    estimation: ""
+                },
+                {
+                    hand:[],
+                    wasHandSwapped: false,
+                    handHidden: true,
+                    power:{
+                        ranking:-1,
+                        card:-1
+                    },
+                    estimation: ""
                 }
             ],
-            debug: false
+            debug: false,
+            wins: 0,
+            gameHasEnded: false,
+            message: ""
         }
     },
     created(){
         this.fillDeck()
         this.apiCall()
         this.debugCheck()
+        this.players.forEach((player, index) => {
+            this.drawToFullHand(index)
+        });
+        this.checkIfCookiesExist()
     },
     methods: {
         echo(z){
@@ -49,6 +80,19 @@ export default {
                 this.deck.splice(z,1)
             }
             this.sortHand(0)
+        },
+        newGame(){
+            this.deck = []
+            this.players[0].hand = []
+            this.players[1].hand = []
+            this.fillDeck()
+            this.players.forEach((player, index) => {
+                this.drawToFullHand(index)
+            });
+            this.message = ""
+            this.players[0].estimation = ""
+            this.players[1].estimation = ""
+            this.gameHasEnded = false
         },
         swapCards(){
             if(this.players[0].wasHandSwapped==false){
@@ -122,19 +166,25 @@ export default {
                 })
             }
         },
-        drawCard(){
+        drawCard(playerID = 0){
             let cardNum = this.getRandomInt(0,this.deck.length)
             if(this.deck[cardNum]==null){
                 console.log(cardNum)
             }
-            this.players[0].hand.push(this.deck[cardNum])
+            this.players[playerID].hand.push(this.deck[cardNum])
             this.deck.splice(cardNum,1)
         },
-        drawToFullHand(){
-            while(this.players[0].hand.length<5){
-                this.drawCard()
+        drawToFullHand(playerID = 0){
+            while(this.players[playerID].hand.length<5){
+                this.drawCard(playerID)
             }
-            this.sortHand(0)
+            this.sortHand(playerID)
+        },
+        checkHandButtonEvent(){
+            this.estimateHand(null,0)
+            this.estimateHand(null,1)
+            this.confrontHands(0,1)
+            this.players[1].handHidden = false
         },
         estimateHand(event, playerID = 0){
             let values = []
@@ -168,34 +218,44 @@ export default {
             }
 
             if(isFlush&&isStright&&values[4]==14){
-                alert("Royal flush")
+                this.players[playerID].estimation = "Royal flush"
+                this.assignPower(playerID, 9, 14)
             }
             else if(isFlush&&isStright){
-                alert("Straight flush")
+                this.players[playerID].estimation = "Straight flush"
+                this.assignPower(playerID, 8, this.players[playerID].hand[4].value)
             }
             else if(isFourOfAKind){
-                alert("Four of a kind")
+                this.players[playerID].estimation = "Four of a kind"
+                this.assignPower(playerID, 7, isFourOfAKind)
             }
             else if(isThreeOfAKind&&isAPair){
-                alert("Full house")
+                this.players[playerID].estimation = "Full house"
+                this.assignPower(playerID, 6, isThreeOfAKind)
             }
             else if(isFlush){
-                alert("Flush")
+                this.players[playerID].estimation = "Flush"
+                this.assignPower(playerID, 5, this.players[playerID].hand[4].value)
             }
             else if(isStright){
-                alert("Straight")
+                this.players[playerID].estimation = "Straight"
+                this.assignPower(playerID, 4, this.players[playerID].hand[4].value)
             }
             else if(isThreeOfAKind){
-                alert("Three of a kind")
+                this.players[playerID].estimation = "Three of a kind"
+                this.assignPower(playerID, 3, isThreeOfAKind)
             }
             else if(isASecondPair){
-                alert("Two pair")
+                this.players[playerID].estimation = "Two pair"
+                this.assignPower(playerID, 2, isASecondPair)
             }
             else if(isAPair){
-                alert("Pair")
+                this.players[playerID].estimation = "Pair"
+                this.assignPower(playerID, 1, isAPair)
             }
             else{
-                alert("High card " + this.players[0].hand[4].character)
+                this.players[playerID].estimation = "High card " + this.players[playerID].hand[4].character
+                this.assignPower(playerID, 0, this.players[playerID].hand[4].value)
             }
             // console.log("DEBUG: Is hand four of a kind?:" + this.checkForFourOfAKind(values))
             // console.log("DEBUG: Is hand three of a kind?:" + isThreeOfAKind)
@@ -203,6 +263,46 @@ export default {
             // console.log("DEBUG: Is hand two of a kind?:" + this.checkForAPair(values))
             // console.log("DEBUG: Is hand flush?:" + this.checkForFlush(symbols))
             // console.log("DEBUG: Is hand straight?:" + this.checkForStraight(values))
+        },
+        confrontHands(firstPlayer, secondPlayer){
+            if(this.players[firstPlayer].power.ranking>this.players[secondPlayer].power.ranking){
+                this.message = "Wygrał gracz pierwszy"
+                this.addWinToCookies()
+                this.gameHasEnded = true
+            }
+            else if(this.players[firstPlayer].power.ranking<this.players[secondPlayer].power.ranking){
+                this.message = "Wygrał gracz drugi"
+                this.gameHasEnded = true
+            }
+            else if(this.players[firstPlayer].power.ranking == this.players[secondPlayer].power.ranking){
+                if(this.players[firstPlayer].power.card > this.players[secondPlayer].power.card){
+                    this.message = "Wygrał gracz pierwszy"
+                    this.addWinToCookies()
+                    this.gameHasEnded = true
+                }
+                else if(this.players[firstPlayer].power.card < this.players[secondPlayer].power.card){
+                    this.message = "Wygrał gracz drugi"
+                    this.gameHasEnded = true
+                }
+                else for(let i=4; i>=0; i--){
+                        if(this.players[firstPlayer].hand[i].value>this.players[secondPlayer].hand[i].value){
+                            this.message = "Wygrał gracz pierwszy"
+                            this.addWinToCookies()
+                            this.gameHasEnded = true
+                            i=-1
+                        }
+                        else if(this.players[firstPlayer].hand[i].value<this.players[secondPlayer].hand[i].value){
+                            this.message = "Wygrał gracz drugi"
+                            this.gameHasEnded = true
+                            i=-1
+                        }
+                        if((i==0)&&(this.players[firstPlayer].hand[i].value == this.players[secondPlayer].hand[i].value)){
+                            this.message = "Remis"
+                            this.gameHasEnded = true
+                            i=-1
+                        }
+                }
+            } 
         },
         checkForFlush(symbols){
             let firstCard = symbols[0]
@@ -260,10 +360,25 @@ export default {
             this.players[playerId].hand.sort((a,b) =>{
                 return a.value - b.value
             })
+        },
+        assignPower(playerID = 0, ranking, card){
+            this.players[playerID].power.ranking = ranking
+            this.players[playerID].power.card = card
+        },
+        checkIfCookiesExist(){
+            if($cookies.get('wins')==null){
+                $cookies.set('wins',0)
+            }
+            this.wins = $cookies.get('wins')
+        },
+        addWinToCookies(){
+            $cookies.set('wins', parseInt($cookies.get('wins'))+1)
+            this.wins = $cookies.get('wins')
         }
     },
     components:{
-        card
+        card,
+        cardHidden
     }
 }
 </script>
